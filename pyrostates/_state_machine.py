@@ -1,4 +1,3 @@
-import asyncio
 import aiosqlite
 from pathlib import Path
 
@@ -41,7 +40,8 @@ class StateMachine:
             return state.name, state.data
         return state, None
 
-    async def create(self, database: str | Path = ':memory:') -> None:
+    @classmethod
+    async def create(cls, database: str | Path = ':memory:') -> None:
         query = '''
         CREATE TABLE IF NOT EXISTS pyrogram_user_states(
             user_id INTEGER PRIMARY KEY,
@@ -49,9 +49,10 @@ class StateMachine:
             state_data TEXT
         );
         '''
-        self._db = await aiosqlite.connect(database, check_same_thread=False)
-        await self._db.execute(query)
-        await self._db.commit()
+        obj = cls()
+        obj._db = await aiosqlite.connect(database, check_same_thread=False)
+        await obj._db.execute(query)
+        await obj._db.commit()
 
     def __init__(self) -> None:
         self._db: aiosqlite.Connection

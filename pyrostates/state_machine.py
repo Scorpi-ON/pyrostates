@@ -1,110 +1,131 @@
-from sqlite3 import connect
-from typing import Union
+import asyncio
+import aiosqlite
+from typing import Self
+from pathlib import Path
 
-from pyrogram.filters import create
+from pyrogram import filters, types
 from pyrogram.types import Message, CallbackQuery, Chat, User
 
-from .state import State
+
+class State:
+    def __init__(self, name: str, data: str | None = None) -> None:
+        self.name = name
+        self.data = data
+
+
+ObjectContainingUserId = types.Update | str | int
+StateOrStateName = State | str
 
 
 class StateMachine:
     @staticmethod
-    def get_id(user_id):
-        if isinstance(user_id, Message):
-            if user_id.from_user:
-                return user_id.from_user.id
-            if user_id.sender_chat:
-                return user_id.sender_chat.id
-        if isinstance(user_id, CallbackQuery):
-            return user_id.from_user.id
-        if isinstance(user_id, (Chat, User)):
-            return user_id.id
-        if isinstance(user_id, str):
-            return int(user_id)
-        return user_id
+    def _get_user_id(object_containing_user_id: ObjectContainingUserId) -> int:
+        if isinstance(object_containing_user_id, Message):
+            if object_containing_user_id.from_user:
+                return object_containing_user_id.from_user.id
+            if object_containing_user_id.sender_chat:
+                return object_containing_user_id.sender_chat.id
+            raise NotImplementedError(...)
+        if isinstance(object_containing_user_id, CallbackQuery):
+            return object_containing_user_id.from_user.id
+        if isinstance(object_containing_user_id, Chat | User):
+            return object_containing_user_id.id
+        if isinstance(object_containing_user_id, str):
+            return int(object_containing_user_id)
+        if isinstance(object_containing_user_id, int):
+            return object_containing_user_id
+        raise NotImplementedError(...)
 
-    def create_table(self):
-        sql = """CREATE TABLE IF NOT EXISTS user_states(user_id INTEGER PRIMARY KEY, user_state TEXT)"""
-        cursor = self.connection.cursor()
-        cursor.execute(sql)
-        self.connection.commit()
-
-    def __init__(self, database: str = ":memory:", state_group=None):
-        self.connection = connect(database, check_same_thread=False)
-        self.state_group = state_group
-        self.create_table()
-
-    def insert_user_state(self, user_id: Union[int, str], state: Union[State, str]):
-        sql = """INSERT INTO user_states VALUES (?, ?)"""
-        user_id = self.get_id(user_id)
-        cursor = self.connection.cursor()
-        cursor.execute(sql, (user_id, state))
-        self.connection.commit()
-
-    def update_user_state(self, user_id: Union[int, str], state: Union[State, str]):
-        sql = """UPDATE user_states SET user_state = ? WHERE user_id = ?"""
-        user_id = self.get_id(user_id)
-        cursor = self.connection.cursor()
-        cursor.execute(sql, (state, user_id))
-        self.connection.commit()
-
-    def __setitem__(self, user_id: Union[int, str], state: Union[State, str]):
+    @staticmethod
+    def _unpack_state(state: StateOrStateName) -> tuple[str, str | None]:
         if isinstance(state, State):
-            state = str(state)
+            return state.name, state.data
+        return state, None
+
+    async def init_db(self, database: str | Path = ':memory:') -> Self:
+        query = '''
+        CREATE TABLE IF NOT EXISTS pyrogram_user_states(
+            user_id INTEGER PRIMARY KEY,
+            state TEXT NOT NULL,
+            state_data TEXT
+        );
+        '''
+        self._db = await aiosqlite.connect(database, check_same_thread=False)
+        await self._db.execute(query)
+        await self._db.commit()
+
+    def __init__(self, database: str | Path = ':memory:') -> None:
+        self._db: aiosqlite.Connection
+        asyncio.run(self.init_db(database))
+
+    async def _insert_user_state(
+            self, 
+            user_id: int, 
+            state: State,
+    ) -> None:
+        query = '''INSERT INTO pyrogram_user_states VALUES (?, ?, ?);'''
+        await self._db.execute(query, (user_id, state.name, state.data))
+        await self._db.commit()
+
+    async def _update_user_state(self, user_id: int, state: State) -> None:
+        query = '''
+        UPDATE pyrogram_user_states 
+        SET state = ?, state_data = ? 
+        WHERE user_id = ?;
+        '''
+        await self._db.execute(query, (user_id, state.name, state.data))
+        await self._db.commit()
+
+    async def _delete_user_state(self, user_id: int) -> None:
+        query = '''DELETE FROM pyrogram_user_states WHERE user_id = ?;'''
+        await self._db.execute(query, (user_id))
+        await self._db.commit()
+
+    async def _select_user_state(self, user_id: int) -> State | None:
+        query = '''SELECT state, data FROM pyrogram_user_states WHERE user_id = ?;'''
+        async with self._db.execute(query, (user_id,)) as cursor:
+            result = await cursor.fetchone()
+            if result is None:
+                return None
+            state, data = result
+            return State(state, data)
+
+    async def __getitem__(
+            self, 
+            object_containing_user_id: ObjectContainingUserId
+    ) -> State | None:
+        user_id = self._get_user_id(object_containing_user_id)
+        return await self._select_user_state(user_id)
+
+    async def __setitem__(
+            self, 
+            object_containing_user_id: ObjectContainingUserId, 
+            state_or_state_name: StateOrStateName
+    ) -> None:
+        user_id = self._get_user_id(object_containing_user_id)
+        name, data = self._unpack_state(state_or_state_name)
+        state = State(name, data)
         if self[user_id] is None:
-            self.insert_user_state(user_id, state)
+            await self._insert_user_state(user_id, state)
         else:
-            self.update_user_state(user_id, state)
+            await self._update_user_state(user_id, state)
 
-    def select_user_state(self, user_id: Union[int, str]):
-        sql = """SELECT user_state FROM user_states WHERE user_id = ?"""
-        user_id = self.get_id(user_id)
-        cursor = self.connection.cursor()
-        cursor.execute(sql, (user_id,))
-        return cursor.fetchone()
-
-    def __getitem__(self, user_id: Union[int, str]):
-        result = self.select_user_state(user_id)
-        if result is None:
-            return result
-        elif self.state_group is not None and result[0] in self.state_group.get_state_dict():
-            return getattr(self.state_group, result[0])
-        else:
-            return result[0]
-
-    def delete_user_state(self, user_id: Union[int, str]):
-        sql = """DELETE from user_states where user_id = ?"""
-        user_id = self.get_id(user_id)
-        cursor = self.connection.cursor()
-        cursor.execute(sql, (user_id,))
-        self.connection.commit()
-
-    def __delitem__(self, user_id: Union[int, str]):
+    async def __delitem__(
+            self,
+            object_containing_user_id: ObjectContainingUserId
+    ) -> None:
+        user_id = self._get_user_id(object_containing_user_id)
         if self[user_id] is None:
-            raise KeyError("User does not exist")
-        self.delete_user_state(user_id)
+            err_msg = 'User does not exist'
+            raise KeyError(err_msg)
+        await self._delete_user_state(user_id)
 
-    def at(self, state: Union[State, str]):
-        @create
-        def at_state(_, __, update):
-            if isinstance(update, Message):
-                if not update.from_user and not update.sender_chat:
-                    return False
-            if hasattr(update, "state"):
-                current_state = getattr(update, "state")
-            else:
-                current_state = self[update]
-                setattr(update, "state", current_state)
-            return current_state == state
+    def at(self, state: StateOrStateName) -> filters.Filter:
+        @filters.create
+        async def at_state(_, __, update: types.Update) -> bool:
+            current_state = await self[update]
+            if current_state is None:
+                return False
+            state_name, _ = self._unpack_state(state)
+            return current_state.name == state_name
         return at_state
-
-    def change_database(self, database: str = ":memory:"):
-        now_connection = connect(database, check_same_thread=False)
-        self.connection.backup(now_connection)
-        self.connection = now_connection
-
-    def get_all(self):
-        sql = """SELECT * FROM user_states"""
-        cursor = self.connection.cursor()
-        cursor.execute(sql)
-        return dict(cursor.fetchall())

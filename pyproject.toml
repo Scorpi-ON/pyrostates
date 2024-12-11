@@ -1,21 +1,22 @@
-[build-system]
-requires = ["setuptools"]
-build-backend = "setuptools.build_meta"
-
-[project]
-name = "Pyrostates"
-version = "1.0.0"
+[tool.poetry]
+name = "pyrostates"
+version = "0.1.0"
 description = "A state handling extension for Pyrogram"
-readme = "README.md"
-license = {file = "LICENSE"}
 authors = [
-  {name = "Sajjad", email = "sajjadalipour2006@gmail.com"}
+    "Scorpi-ON <s.scorpi-on@ya.ru>", 
+    "SajjadAlipour2006 <sajjadalipour2006@gmail.com>"
 ]
-keywords = ["python", "bot", "telegram", "pyrogram"]
-classifiers = [
-    "License :: OSI Approved :: MIT License"
-]
+license = "MIT"
+readme = "README.md"
 
-[project.urls]
-"Homepage" = "https://github.com/SajjadAlipour2006/Pyrostates"
-"Tracker" = "https://github.com/SajjadAlipour2006/Pyrostates/issues"
+[tool.poetry.dependencies]
+python = "^3.13"
+pyrogram = { git = "https://github.com/KurimuzonAkuma/pyrogram.git", tag = "v2.1.31" }
+aiosqlite = "^0.20.0"
+
+[tool.poetry.group.dev.dependencies]
+ruff = "0.7.1"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

@@ -1,4 +1,4 @@
-import aiosqlite
+import sqlite3
 from typing import Self
 from pathlib import Path
 
@@ -42,7 +42,7 @@ class StateMachine:
         return state, None
 
     @classmethod
-    async def create(cls, database: str | Path = ':memory:') -> Self:
+    def create(cls, database: str | Path = ':memory:') -> Self:
         query = '''
         CREATE TABLE IF NOT EXISTS pyrogram_user_states(
             user_id INTEGER PRIMARY KEY,
@@ -51,54 +51,58 @@ class StateMachine:
         );
         '''
         obj = cls()
-        obj._db = await aiosqlite.connect(database, check_same_thread=False)
-        await obj._db.execute(query)
-        await obj._db.commit()
+        obj._db = sqlite3.connect(database)
+        obj._db.execute(query)
+        obj._db.commit()
         return obj
 
     def __init__(self) -> None:
-        self._db: aiosqlite.Connection
+        self._db: sqlite3.Connection
 
-    async def _insert_user_state(
+    def _insert_user_state(
             self, 
             user_id: int, 
             state: State,
     ) -> None:
         query = '''INSERT INTO pyrogram_user_states VALUES (?, ?, ?);'''
-        await self._db.execute(query, (user_id, state.name, state.data))
-        await self._db.commit()
+        self._db.execute(query, (user_id, state.name, state.data))
+        self._db.commit()
 
-    async def _update_user_state(self, user_id: int, state: State) -> None:
+    def _update_user_state(self, user_id: int, state: State) -> None:
         query = '''
         UPDATE pyrogram_user_states 
         SET state = ?, state_data = ? 
         WHERE user_id = ?;
         '''
-        await self._db.execute(query, (user_id, state.name, state.data))
-        await self._db.commit()
+        self._db.execute(query, (state.name, state.data, user_id))
+        self._db.commit()
 
-    async def _delete_user_state(self, user_id: int) -> None:
+    def _delete_user_state(self, user_id: int) -> None:
         query = '''DELETE FROM pyrogram_user_states WHERE user_id = ?;'''
-        await self._db.execute(query, (user_id))
-        await self._db.commit()
+        self._db.execute(query, (user_id,))
+        self._db.commit()
 
-    async def _select_user_state(self, user_id: int) -> State | None:
-        query = '''SELECT state, data FROM pyrogram_user_states WHERE user_id = ?;'''
-        async with self._db.execute(query, (user_id,)) as cursor:
-            result = await cursor.fetchone()
-            if result is None:
-                return None
-            state, data = result
-            return State(state, data)
+    def _select_user_state(self, user_id: int) -> State | None:
+        query = '''
+        SELECT state, state_data 
+        FROM pyrogram_user_states 
+        WHERE user_id = ?;
+        '''
+        cursor = self._db.execute(query, (user_id,))
+        result = cursor.fetchone()
+        if result is None:
+            return None
+        state, data = result
+        return State(state, data)
 
-    async def __getitem__(
+    def __getitem__(
             self, 
             object_containing_user_id: ObjectContainingUserId
     ) -> State | None:
         user_id = self._get_user_id(object_containing_user_id)
-        return await self._select_user_state(user_id)
+        return self._select_user_state(user_id)
 
-    async def __setitem__(
+    def __setitem__(
             self, 
             object_containing_user_id: ObjectContainingUserId, 
             state_or_state_name: StateOrStateName
@@ -107,11 +111,11 @@ class StateMachine:
         name, data = self._unpack_state(state_or_state_name)
         state = State(name, data)
         if self[user_id] is None:
-            await self._insert_user_state(user_id, state)
+            self._insert_user_state(user_id, state)
         else:
-            await self._update_user_state(user_id, state)
+            self._update_user_state(user_id, state)
 
-    async def __delitem__(
+    def __delitem__(
             self,
             object_containing_user_id: ObjectContainingUserId
     ) -> None:
@@ -119,12 +123,12 @@ class StateMachine:
         if self[user_id] is None:
             err_msg = 'User does not exist'
             raise KeyError(err_msg)
-        await self._delete_user_state(user_id)
+        self._delete_user_state(user_id)
 
     def at(self, state: StateOrStateName) -> filters.Filter:
         @filters.create
-        async def at_state(_, __, update: types.Update) -> bool:
-            current_state = await self[update]
+        def at_state(_, __, update: types.Update) -> bool:
+            current_state = self[update]
             if current_state is None:
                 return False
             state_name, _ = self._unpack_state(state)

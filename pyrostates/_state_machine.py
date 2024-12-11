@@ -1,5 +1,4 @@
 import sqlite3
-from typing import Self
 from pathlib import Path
 
 from pyrogram import filters, types
@@ -41,8 +40,8 @@ class StateMachine:
             return state.name, state.data
         return state, None
 
-    @classmethod
-    def create(cls, database: str | Path = ':memory:') -> Self:
+    def __init__(self, database: str | Path = ':memory:') -> None:
+        self._db: sqlite3.Connection
         query = '''
         CREATE TABLE IF NOT EXISTS pyrogram_user_states(
             user_id INTEGER PRIMARY KEY,
@@ -50,14 +49,9 @@ class StateMachine:
             state_data TEXT
         );
         '''
-        obj = cls()
-        obj._db = sqlite3.connect(database)
-        obj._db.execute(query)
-        obj._db.commit()
-        return obj
-
-    def __init__(self) -> None:
-        self._db: sqlite3.Connection
+        self._db = sqlite3.connect(database)
+        self._db.execute(query)
+        self._db.commit()
 
     def _insert_user_state(
             self, 

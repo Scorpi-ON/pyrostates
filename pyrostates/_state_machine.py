@@ -49,7 +49,7 @@ class StateMachine:
             state_data TEXT
         );
         '''
-        self._db = sqlite3.connect(database)
+        self._db = sqlite3.connect(database, check_same_thread=False)
         self._db.execute(query)
         self._db.commit()
 

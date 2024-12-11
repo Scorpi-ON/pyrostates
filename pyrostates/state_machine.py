@@ -1,6 +1,5 @@
 import asyncio
 import aiosqlite
-from typing import Self
 from pathlib import Path
 
 from pyrogram import filters, types
@@ -42,7 +41,7 @@ class StateMachine:
             return state.name, state.data
         return state, None
 
-    async def init_db(self, database: str | Path = ':memory:') -> Self:
+    async def create(self, database: str | Path = ':memory:') -> None:
         query = '''
         CREATE TABLE IF NOT EXISTS pyrogram_user_states(
             user_id INTEGER PRIMARY KEY,
@@ -54,9 +53,8 @@ class StateMachine:
         await self._db.execute(query)
         await self._db.commit()
 
-    def __init__(self, database: str | Path = ':memory:') -> None:
+    def __init__(self) -> None:
         self._db: aiosqlite.Connection
-        asyncio.run(self.init_db(database))
 
     async def _insert_user_state(
             self, 
